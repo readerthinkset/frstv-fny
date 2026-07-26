@@ -134,9 +134,9 @@ def upload_to_instagram(video_path, caption="", is_story=False):
 
         if pub_res.status_code in (200, 201):
             media_id = pub_res.json().get('id', container_id)
-            print(f"[instagram] ✅ SUCCESS! Media ID: {media_id}")
+            print(f"[instagram] ? SUCCESS! Media ID: {media_id} (waited {waited}s)")
             print(f"INSTAGRAM: SUCCESS (ID: {media_id})")
-            return {'status': 'success', 'id': media_id, 'platform': 'instagram'}
+            return {'status': 'success', 'id': media_id, 'platform': 'instagram', 'wait_s': waited}
         else:
             err = pub_res.json().get('error', {}).get('message', pub_res.text)
             raise Exception(f"Publish failed: {err}")
@@ -144,5 +144,6 @@ def upload_to_instagram(video_path, caption="", is_story=False):
     except Exception as e:
         print(f"[instagram] ❌ Error: {e}")
         return {'status': 'failed', 'error': str(e), 'platform': 'instagram'}
+
 
 
