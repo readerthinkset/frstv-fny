@@ -111,32 +111,26 @@ def upload_to_instagram(video_path, caption="", is_story=False):
 
         print(f"[instagram] ✅ Video Bytes Transferred Successfully!")
 
-        print("[instagram] Step 3: Polling Meta container status until FINISHED...")
-        max_polls = 18 # Up to 3 minutes
-        is_ready = False
-        
-        for poll_idx in range(max_polls):
-            time.sleep(5)
-            st_res = requests.get(
-                f"{api_base}/{container_id}?fields=status_code,status&access_token={access_token}",
-                timeout=10
+        print("[instagram] Step 3: Waiting for Meta to process container...")
+        max_wait = 300
+        waited = 0
+        while waited < max_wait:
+            time.sleep(45 if waited == 0 else 30)
+            waited += 45 if waited == 0 else 30
+            print(f"[instagram] Publishing media (waited {waited}s)...")
+            pub_res = requests.post(
+                f"{api_base}/{user_id}/media_publish",
+                params={'creation_id': container_id, 'access_token': access_token},
+                timeout=60
             )
-            if st_res.status_code == 200:
-                st_data = st_res.json()
-                status_code = st_data.get('status_code')
-                print(f"[instagram] Poll [{poll_idx+1}/{max_polls}]: status_code = {status_code}")
-                if status_code == 'FINISHED':
-                    is_ready = True
-                    break
-                elif status_code == 'ERROR':
-                    raise Exception(f"Meta container processing error: {st_data.get('status')}")
-
-        print("[instagram] Step 4: Publishing Media...")
-        pub_res = requests.post(
-            f"{api_base}/{user_id}/media_publish",
-            params={'creation_id': container_id, 'access_token': access_token},
-            timeout=60
-        )
+            if pub_res.status_code in (200, 201):
+                break
+            err_msg = ""
+            try: err_msg = pub_res.json().get('error', {}).get('message', '')
+            except: pass
+            if waited >= max_wait:
+                raise Exception(f"Publish failed after {max_wait}s: {err_msg or pub_res.text}")
+            print(f"[instagram] Not ready yet, retrying in 30s...")
 
         if pub_res.status_code in (200, 201):
             media_id = pub_res.json().get('id', container_id)
@@ -150,3 +144,5 @@ def upload_to_instagram(video_path, caption="", is_story=False):
     except Exception as e:
         print(f"[instagram] ❌ Error: {e}")
         return {'status': 'failed', 'error': str(e), 'platform': 'instagram'}
+
+
