@@ -112,7 +112,7 @@ def upload_to_instagram(video_path, caption="", is_story=False):
         print(f"[instagram] ✅ Video Bytes Transferred Successfully!")
 
         print("[instagram] Step 3: Waiting for Meta to process container...")
-        max_wait = 300
+        max_wait = 180
         waited = 0
         while waited < max_wait:
             time.sleep(45 if waited == 0 else 30)
