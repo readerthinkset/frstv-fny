@@ -4334,5 +4334,21 @@
             },
             "recycled": true
         }
+    },
+    {
+        "video_name": "0206(8).mp4",
+        "metadata": {
+            "title": "Joey Doesn't Share Food! Best Joey Moments",
+            "description": "Friends Thanksgiving Episodes \ud83e\udd83 We're serving up the best Thanksgiving moments from the show that made this holiday legendary. The trifle, the football game, the pants that were too tight... which Thanksgiving episode is your favorite? Vote in the comments! \ud83c\udfc8 #friendsthanksgiving #friends #tvshow #holiday #trifle #thanksgiving #friendstv",
+            "success_flags": {
+                "instagram_reel": true,
+                "instagram_story": true,
+                "facebook_reel": true,
+                "facebook_story": false,
+                "threads": false,
+                "youtube": false
+            },
+            "recycled": true
+        }
     }
 ]
