@@ -1,346 +1,140 @@
 """
-Facebook Reels Upload
-
-Facebook Graph API for uploading Reels to Facebook Page.
-Enhanced with comprehensive debugging and error handling.
+Facebook Video / Reels Direct Upload - STRICTLY 1 SINGLE META API CALL
+Direct multipart upload to Meta Graph Video API endpoint.
+Publishes directly to Facebook Page feed in exactly 1 HTTP request.
+Zero chunking sessions, zero status polling loops, zero comment retries.
 """
 
 import os
-import requests
+import sys
+import json
 from pathlib import Path
-
+from datetime import datetime
 from dotenv import load_dotenv
 
-# Load environment variables with override
-env_path = Path(__file__).parent.parent / '.env'
-load_dotenv(dotenv_path=env_path, override=True)
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
-def _post_pinned_comment(video_id, description, access_token, page_id):
-    import time
-    print(f"[facebook] Posting description as pinned comment...")
-    max_retries = 5
-    comment_id = None
-    for attempt in range(max_retries):
-        try:
-            comment_url = f"https://graph.facebook.com/v21.0/{video_id}/comments"
-            comment_data = {'access_token': access_token, 'message': description}
-            res_comment = requests.post(comment_url, data=comment_data, timeout=30)
-            if res_comment.status_code == 200:
-                resp = res_comment.json()
-                comment_id = resp.get('id')
-                if comment_id:
-                    print(f"[facebook] Comment posted! ID: {comment_id}")
-                    break
-            elif res_comment.status_code == 404 and attempt < max_retries - 1:
-                wait = (attempt + 1) * 10
-                print(f"[facebook] Video not ready yet, waiting {wait}s...")
-                time.sleep(wait)
-        except Exception as e:
-            print(f"[facebook] Comment post error: {e}")
-            break
-    if comment_id:
-        try:
-            pin_url = f"https://graph.facebook.com/v21.0/{comment_id}"
-            pin_data = {'access_token': access_token, 'is_pinned': 'true'}
-            requests.post(pin_url, data=pin_data, timeout=15)
-            print(f"[facebook] Comment pinned!")
-        except Exception as e:
-            print(f"[facebook] Pin error: {e}")
+# Load environment
+for env_candidate in [Path(".env"), Path("../.env"), Path(__file__).resolve().parent / ".env", Path(__file__).resolve().parent.parent / ".env"]:
+    if env_candidate.exists():
+        load_dotenv(dotenv_path=env_candidate, override=True)
+        break
+else:
+    load_dotenv()
 
-def upload_to_facebook(video_path, description, title="Friends Tv Funny"):
-    import time
-    
-    print("\n" + "=" * 60)
-    print("📘 FACEBOOK UPLOAD STARTING")
-    print("=" * 60)
-    
-    access_token = os.getenv('FACEBOOK_ACCESS_TOKEN') or os.getenv('FB_ACCESS_TOKEN')
-    page_id = os.getenv('FACEBOOK_PAGE_ID') or os.getenv('FB_PAGE_ID')
-    
-    def mask(s): return f"{s[:4]}...{s[-4:]}" if s and len(s) > 8 else ("PLACEHOLDER (***)" if s == "***" else "MISSING")
-    print(f"[facebook] Page ID: {page_id}")
-    print(f"[facebook] Access Token: {mask(access_token)}")
 
-    if not access_token:
-        print("[facebook] ⚠️  Skipping - FACEBOOK_ACCESS_TOKEN not set")
-        return {'status': 'skipped', 'reason': 'Missing credentials', 'platform': 'facebook'}
-    if not page_id:
-        print("[facebook] ⚠️  Skipping - FACEBOOK_PAGE_ID not set")
-        return {'status': 'skipped', 'reason': 'Missing credentials', 'platform': 'facebook'}
-    
-    print(f"[facebook] ✅ Credentials loaded")
-    
-    video_path_obj = Path(video_path)
-    if not video_path_obj.exists():
-        error_msg = f"❌ Video file not found: {video_path}"
-        print(f"[facebook] {error_msg}")
-        raise FileNotFoundError(error_msg)
-    
-    file_size_mb = video_path_obj.stat().st_size / (1024 * 1024)
-    print(f"[facebook] ✅ Video file found: {video_path}")
-    print(f"[facebook] Video size: {file_size_mb:.2f} MB")
-    
-    max_retries = 3
-    last_error = None
-    
-    for overall_attempt in range(max_retries):
-        try:
-            file_size = video_path_obj.stat().st_size
-            
-            # Step 1: Initialize
-            print(f"[facebook] Step 1: Initiating upload session (attempt {overall_attempt + 1})...")
-            start_url = f"https://graph.facebook.com/v21.0/{page_id}/video_reels"
-            start_data = {
-                'access_token': access_token,
-                'upload_phase': 'start',
-                'file_size': file_size
-            }
-            res_start = requests.post(start_url, data=start_data, timeout=30)
-            
-            if res_start.status_code != 200:
-                print(f"[facebook] ❌ Start Phase Error: {res_start.text}")
-                if overall_attempt < max_retries - 1:
-                    wait = (overall_attempt + 1) * 15
-                    print(f"[facebook] Retrying in {wait}s...")
-                    time.sleep(wait)
-                    continue
-                raise Exception(f"Start Phase Failed: {res_start.text}")
-                
-            start_json = res_start.json()
-            video_id = start_json.get('video_id')
-            upload_url = start_json.get('upload_url')
-            
-            if not video_id:
-                 raise Exception(f"No video_id returned. Response: {start_json}")
-                 
-            # Step 2: Transfer
-            print(f"[facebook] Step 2: Transferring file to Facebook Servers...")
-            headers = {
-                'Authorization': f'OAuth {access_token}',
-                'offset': '0',
-                'file_size': str(file_size)
-            }
-            with open(video_path, 'rb') as f:
-                res_transfer = requests.post(upload_url, headers=headers, data=f, timeout=600)
-                
-            if res_transfer.status_code != 200:
-                print(f"[facebook] ❌ Transfer Phase Error: {res_transfer.text}")
-                if overall_attempt < max_retries - 1:
-                    wait = (overall_attempt + 1) * 15
-                    print(f"[facebook] Retrying in {wait}s...")
-                    time.sleep(wait)
-                    continue
-                raise Exception(f"Transfer Phase Failed: {res_transfer.text}")
-                
-            # Step 3: Finish
-            print(f"[facebook] Step 3: Publishing Reel...")
-            finish_url = f"https://graph.facebook.com/v21.0/{page_id}/video_reels"
-            finish_data = {
-                'access_token': access_token,
-                'upload_phase': 'finish',
-                'video_id': video_id,
-                'description': description,
-                'video_state': 'PUBLISHED'
-            }
-            res_finish = requests.post(finish_url, data=finish_data, timeout=60)
-            
-            if res_finish.status_code == 200 and res_finish.json().get('success'):
-                print(f"[facebook] ✅ SUCCESS! Reel uploaded!")
-                print(f"[facebook] Video ID: {video_id}")
-                
-                # Post pinned comment
-                _post_pinned_comment(video_id, description, access_token, page_id)
-                
-                print("=" * 60)
-                return {
-                    'id': video_id,
-                    'platform': 'facebook',
-                    'status': 'success',
-                    'url': f"https://facebook.com/{video_id}"
-                }
-            else:
-                print(f"[facebook] ❌ Finish Phase Error: {res_finish.text}")
-                if overall_attempt < max_retries - 1:
-                    wait = (overall_attempt + 1) * 15
-                    print(f"[facebook] Retrying in {wait}s...")
-                    time.sleep(wait)
-                    continue
-                raise Exception(f"Finish Phase Failed: {res_finish.text}")
-                
-        except requests.exceptions.Timeout:
-            last_error = "⏱️ Upload timed out"
-            print(f"[facebook] ❌ {last_error}")
-            if overall_attempt < max_retries - 1:
-                wait = (overall_attempt + 1) * 20
-                print(f"[facebook] Retrying in {wait}s...")
-                time.sleep(wait)
-            else:
-                raise Exception(last_error)
-                
-        except requests.exceptions.ConnectionError as e:
-            last_error = f"🌐 Connection error: {str(e)}"
-            print(f"[facebook] ❌ {last_error}")
-            if overall_attempt < max_retries - 1:
-                wait = (overall_attempt + 1) * 20
-                print(f"[facebook] Retrying in {wait}s...")
-                time.sleep(wait)
-            else:
-                raise Exception(last_error)
-                
-        except Exception as e:
-            last_error = str(e)
-            print(f"[facebook] ❌ Error: {e}")
-            if overall_attempt < max_retries - 1:
-                wait = (overall_attempt + 1) * 15
-                print(f"[facebook] Retrying in {wait}s...")
-                time.sleep(wait)
-            else:
-                raise
-    
-    raise Exception(f"All {max_retries} attempts failed: {last_error}")
+def safe_print(msg: str):
+    try:
+        print(msg)
+    except Exception:
+        print(msg.encode("ascii", "replace").decode("ascii"))
 
-def upload_to_facebook_story(video_path):
+
+def upload_to_facebook(video_path, description, title="Video", thumbnail_path=None, page_id=None, access_token=None):
     """
-    Upload video to Facebook Page as a Story.
+    Uploads video to Facebook Page in EXACTLY ONE Meta Graph API call.
+    Single direct multipart POST to https://graph-video.facebook.com/v21.0/{page_id}/videos
     """
-    print("\n" + "=" * 60)
-    print("📘 FACEBOOK STORY UPLOAD STARTING")
-    print("=" * 60)
+    import requests
 
-    # Get credentials
-    access_token = os.getenv('FACEBOOK_ACCESS_TOKEN') or os.getenv('FB_ACCESS_TOKEN')
-    page_id = os.getenv('FACEBOOK_PAGE_ID') or os.getenv('FB_PAGE_ID')
+    access_token = access_token or os.getenv("FACEBOOK_ACCESS_TOKEN") or os.getenv("FB_ACCESS_TOKEN")
+    page_id = page_id or os.getenv("FACEBOOK_PAGE_ID") or os.getenv("FB_PAGE_ID")
 
     if not access_token or not page_id:
-        print("[facebook] ⚠️  Skipping Facebook Story - Missing credentials")
-        return {'status': 'skipped', 'reason': 'Missing credentials', 'platform': 'facebook_story'}
+        safe_print("[Facebook] Notice: FACEBOOK_ACCESS_TOKEN or FACEBOOK_PAGE_ID not set. Skipping upload.")
+        return None
 
-    print(f"[facebook] Page ID: {page_id}")
-    
-    video_path_obj = Path(video_path)
-    if not video_path_obj.exists():
-        raise FileNotFoundError(f"[facebook] Video not found: {video_path}")
+    video_file = Path(video_path)
+    if not video_file.exists():
+        safe_print(f"[Facebook] Error: Video file not found: {video_path}")
+        return None
 
-    # Endpoint for Video Stories
-    url = f"https://graph.facebook.com/v21.0/{page_id}/video_stories"
+    file_size_mb = video_file.stat().st_size / (1024 * 1024)
+
+    safe_print("\n" + "=" * 60)
+    safe_print("FACEBOOK VIDEO PUBLISH (STRICTLY 1 META API CALL)")
+    safe_print("=" * 60)
+    safe_print(f"[Facebook] Page ID: {page_id}")
+    safe_print(f"[Facebook] Video: {video_file.name} ({file_size_mb:.2f} MB)")
+    safe_print(f"[Facebook] Title: {str(title)[:70]}")
+    safe_print(f"[Facebook] Description length: {len(str(description))} chars")
+
+    upload_url = f"https://graph-video.facebook.com/v21.0/{page_id}/videos"
+
+    data = {
+        "title": str(title)[:100],
+        "description": str(description)[:5000],
+        "published": "true",
+        "access_token": access_token
+    }
+
+    video_fp = None
+    thumb_fp = None
 
     try:
-        print(f"[facebook] 🚀 Uploading Story to Facebook (Sessions API)...")
-        
-        file_size = video_path_obj.stat().st_size
-        
-        # Step 1: Start Upload Session
-        print(f"[facebook] Step 1: Initiating upload session...")
-        # Note: /video_stories endpoint strictly requires session flow for most apps
-        start_url = f"https://graph.facebook.com/v21.0/{page_id}/video_stories"
-        start_data = {
-            'access_token': access_token,
-            'upload_phase': 'start',
-            'file_size': file_size
+        video_fp = open(video_file, "rb")
+        files = {
+            "source": (video_file.name, video_fp, "video/mp4")
         }
-        res_start = requests.post(start_url, data=start_data, timeout=30)
-        
-        if res_start.status_code != 200:
-             # If "start" fails, we can't proceed. Log detailed error.
-             print(f"[facebook] ❌ Start Phase Error: {res_start.text}")
-             raise Exception(f"Start Phase Failed: {res_start.text}")
-        
-        start_json = res_start.json()
-        upload_session_id = start_json.get('upload_session_id')
-        video_id = start_json.get('video_id')
-        upload_url = start_json.get('upload_url')
-        
-        if upload_url:
-            print(f"[facebook] Step 2: Transferring file via upload_url...")
-            headers = {
-                'Authorization': f'OAuth {access_token}',
-                'offset': '0',
-                'file_size': str(file_size)
-            }
-            with open(video_path, 'rb') as f:
-                res_transfer = requests.post(upload_url, headers=headers, data=f, timeout=600)
-                
-            if res_transfer.status_code != 200:
-                print(f"[facebook] ❌ Transfer Phase Error: {res_transfer.text}")
-                raise Exception(f"Transfer Phase Failed: {res_transfer.text}")
-                
-            print(f"[facebook] Step 3: Finishing upload...")
-            finish_url = f"https://graph.facebook.com/v21.0/{page_id}/video_stories"
-            finish_data = {
-                'access_token': access_token,
-                'upload_phase': 'finish',
-                'video_id': video_id
-            }
-            # Add upload_session_id if we have it too just in case
-            if upload_session_id:
-                 finish_data['upload_session_id'] = upload_session_id
-                 
-            res_finish = requests.post(finish_url, data=finish_data, timeout=60)
-            
-            if res_finish.status_code == 200 or res_finish.json().get('success'):
-                print(f"[facebook] ✅ SUCCESS! Story uploaded!")
-                print(f"[facebook] Video ID: {video_id}")
-                print("=" * 60)
-                return {'id': video_id, 'platform': 'facebook_story', 'status': 'success'}
-            else:
-                print(f"[facebook] ❌ Finish Phase Error: {res_finish.text}")
-                raise Exception(f"Finish Phase Failed: {res_finish.text}")
-        elif upload_session_id:
-            print(f"[facebook] Step 2: Transferring file...")
-            transfer_url = f"https://graph.facebook.com/v21.0/{page_id}/video_stories"
-            
-            with open(video_path, 'rb') as f:
-                files = {'video_file_chunk': f}
-                transfer_data = {
-                    'access_token': access_token,
-                    'upload_phase': 'transfer',
-                    'start_offset': 0,
-                    'upload_session_id': upload_session_id
+
+        # Attach thumbnail if available
+        if thumbnail_path and Path(thumbnail_path).exists():
+            try:
+                thumb_fp = open(thumbnail_path, "rb")
+                files["thumb"] = (Path(thumbnail_path).name, thumb_fp, "image/jpeg")
+            except Exception as te:
+                safe_print(f"[Facebook] Notice reading thumbnail: {te}")
+
+        safe_print("[Facebook] Sending single multipart POST request (API Call 1 of 1)...")
+        res = requests.post(upload_url, data=data, files=files, timeout=600)
+
+        if res.status_code in [200, 201]:
+            res_data = res.json()
+            video_id = res_data.get("id") or res_data.get("video_id")
+            if video_id:
+                safe_print("\n" + "=" * 60)
+                safe_print("SUCCESS: FACEBOOK VIDEO PUBLISHED (EXACTLY 1 API CALL)!")
+                safe_print(f"[Facebook] Video ID: {video_id}")
+                safe_print(f"[Facebook] Video URL: https://www.facebook.com/{video_id}")
+                safe_print("=" * 60)
+                return {
+                    "id": str(video_id),
+                    "video_id": str(video_id),
+                    "platform": "facebook",
+                    "status": "success",
+                    "url": f"https://www.facebook.com/{video_id}",
+                    "published_at": datetime.now().isoformat(),
+                    "api_calls_made": 1
                 }
-                res_transfer = requests.post(transfer_url, data=transfer_data, files=files, timeout=600)
-                
-            if res_transfer.status_code != 200:
-                print(f"[facebook] ❌ Transfer Phase Error: {res_transfer.text}")
-                raise Exception(f"Transfer Phase Failed: {res_transfer.text}")
-                
-            # Step 3: Finish Upload
-            print(f"[facebook] Step 3: Finishing upload...")
-            finish_url = f"https://graph.facebook.com/v21.0/{page_id}/video_stories"
-            finish_data = {
-                'access_token': access_token,
-                'upload_phase': 'finish',
-                'upload_session_id': upload_session_id,
-                 'title': 'Story Upload'
-            }
-            res_finish = requests.post(finish_url, data=finish_data, timeout=60)
-            
-            if res_finish.status_code == 200 or res_finish.json().get('success'):
-                print(f"[facebook] ✅ SUCCESS! Story uploaded!")
-                print(f"[facebook] Video ID: {video_id}")
-                print("=" * 60)
-                return {'id': video_id, 'platform': 'facebook_story', 'status': 'success'}
-            else:
-                print(f"[facebook] ❌ Finish Phase Error: {res_finish.text}")
-                raise Exception(f"Finish Phase Failed: {res_finish.text}")
-        else:
-             raise Exception(f"No upload_session_id or upload_url returned. Response: {start_json}")
 
+        safe_print(f"[Facebook] API Response ({res.status_code}): {res.text[:400]}")
+        return None
+
+    except requests.exceptions.Timeout:
+        safe_print("[Facebook] Error: Upload request timed out.")
+        return None
     except Exception as e:
-        print(f"[facebook] ❌ ERROR: {e}")
-        raise e
+        safe_print(f"[Facebook] Error during single-call upload: {e}")
+        return None
+    finally:
+        if video_fp:
+            try:
+                video_fp.close()
+            except Exception:
+                pass
+        if thumb_fp:
+            try:
+                thumb_fp.close()
+            except Exception:
+                pass
 
-if __name__ == '__main__':
-    # Test upload
-    from pathlib import Path
-    
-    video_file = Path('final_video.mp4')
-    if video_file.exists():
-        try:
-            # Test standard upload
-            # result = upload_to_facebook(video_file, "Test")
-            
-            # Test Story upload (comment out above to test)
-            upload_to_facebook_story(video_file)
-            pass
-        except Exception as e:
-            print(f"\n❌ Test failed: {e}")
+
+if __name__ == "__main__":
+    test_file = Path("final_video.mp4")
+    if test_file.exists():
+        upload_to_facebook(str(test_file), "Daily automated post", "Daily Video")
